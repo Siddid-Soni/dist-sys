@@ -1,0 +1,64 @@
+name: Maelstrom Tests
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        components: rustfmt, clippy
+        
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+          
+    - name: Install Java (required for Maelstrom)
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '11'
+        
+    - name: Download and setup Maelstrom
+      run: |
+        wget https://github.com/jepsen-io/maelstrom/releases/download/v0.2.3/maelstrom.tar.bz2
+        tar -xjf maelstrom.tar.bz2
+        echo "$(pwd)/maelstrom" >> $GITHUB_PATH
+        
+    - name: Build Rust project
+      run: cargo build --release
+      
+    - name: Run Maelstrom echo test
+      run: |
+        ./maelstrom/maelstrom test -w echo --bin ./target/release/dist-sys --node-count 1 --time-limit 10
+        
+    - name: Run Maelstrom echo test (multiple nodes)
+      run: |
+        ./maelstrom/maelstrom test -w echo --bin ./target/release/dist-sys --node-count 3 --time-limit 10
+        
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: maelstrom-test-results
+        path: store/
+        retention-days: 7
