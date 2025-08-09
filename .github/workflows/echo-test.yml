@@ -8,7 +8,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/siddid-soni/maelstrom-rust:latest  # Replace 'your-username' with your GitHub username
+      image: ghcr.io/siddid-soni/dist-sys/maelstrom-rust:latest
     
     steps:
     - name: Checkout code
