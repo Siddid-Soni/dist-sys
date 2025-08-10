@@ -1,4 +1,4 @@
-use std::io::StdoutLock;
+use std::io::{BufRead, StdoutLock, Write};
 use anyhow::Context;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -19,29 +19,69 @@ pub struct Body<Payload> {
     pub payload: Payload
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag="type")]
+#[serde(rename_all="snake_case")]
+enum InitPayload {
+    Init(Init),
+    InitOk
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Init {
     pub node_id: String,
     pub node_ids: Vec<String>,
 }
 
+pub trait Node<S, Payload> {
+    fn from_init(state: S, init: Init) -> anyhow::Result<Self>
+    where Self: Sized;
 
-pub trait Node<Payload> {
     fn step(&mut self, input: Message<Payload>, output: &mut StdoutLock) -> anyhow::Result<()>;
 }
 
-pub fn main_loop<S, Payload>(mut state: S) -> anyhow::Result<()>
+pub fn main_loop<S, N, P>(init_state: S) -> anyhow::Result<()>
 where
-    S:Node<Payload>,
-    Payload: DeserializeOwned
+    P: DeserializeOwned, 
+    N: Node<S, P>,
 {
     let stdin = std::io::stdin().lock();
-    let inputs = serde_json::Deserializer::from_reader(stdin).into_iter::<Message<Payload>>();
-    
+    let mut stdin = stdin.lines();
     let mut stdout = std::io::stdout().lock();
+    
+    
+    let init_msg: Message<InitPayload> = serde_json::from_str(
+        &stdin
+        .next()
+        .expect("no init msg")
+        .context("failed to read init msg")?
+    )
+    .context("init could not be deserialised")?;
 
-    for input in inputs {
-        let input = input.context("Could not Deserialize Input")?;
-        state
+    let InitPayload::Init(init) = init_msg.body.payload else {
+        panic!("first msg shoulb be init");
+    };
+    
+    let mut node: N = Node::from_init(init_state, init).context("node initialization failed")?;
+    
+    let reply = Message {
+        src: init_msg.dst,
+        dst: init_msg.src,
+        body: Body {
+            id: Some(0),
+            in_reply_to: init_msg.body.id,
+            payload: InitPayload::InitOk
+        }
+    };
+    serde_json::to_writer(&mut stdout, &reply).context("serialize response")?;
+    stdout.write_all(b"\n").context("newline")?;
+
+    for line in stdin {
+        let line = line.context("input could not be read")?;
+        let input = serde_json::from_str(&line)
+            .context("input could not be deserialized")?;
+        node
             .step(input, &mut stdout)
             .context("node step failed")?;
     }

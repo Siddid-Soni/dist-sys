@@ -53,6 +53,10 @@ jobs:
     - name: Run Maelstrom echo test (multiple nodes)
       run: |
         ./maelstrom/maelstrom test -w echo --bin ./target/release/echo --node-count 3 --time-limit 10
+
+    - name: Run Maelstrom unique-ids test
+      run: |
+        ./maelstrom/maelstrom test -w unique-ids --bin ./target/debug/unique-ids --time-limit 30 --rate 1000 --node-count 3 --availability total --nemesis partition
         
     - name: Upload test results
       if: always()
