@@ -56,8 +56,11 @@ jobs:
 
     - name: Run Maelstrom unique-ids test
       run: |
-        ./maelstrom/maelstrom test -w unique-ids --bin ./target/debug/unique-ids --time-limit 30 --rate 1000 --node-count 3 --availability total --nemesis partition
-        
+        ./maelstrom/maelstrom test -w unique-ids --bin ./target/release/unique-ids --time-limit 30 --rate 1000 --node-count 3 --availability total --nemesis partition
+    
+    - name: Run Maelstrom echo test (multiple nodes)
+      run: |
+        ./maelstrom/maelstrom test -w broadcast --bin ./target/release/broadcast --node-count 1 --time-limit 20 --rate 10
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
