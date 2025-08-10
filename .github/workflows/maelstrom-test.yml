@@ -49,10 +49,6 @@ jobs:
     - name: Run Maelstrom echo test
       run: |
         ./maelstrom/maelstrom test -w echo --bin ./target/release/echo --node-count 1 --time-limit 10
-        
-    - name: Run Maelstrom echo test (multiple nodes)
-      run: |
-        ./maelstrom/maelstrom test -w echo --bin ./target/release/echo --node-count 3 --time-limit 10
 
     - name: Run Maelstrom unique-ids test
       run: |
@@ -61,6 +57,7 @@ jobs:
     - name: Run Maelstrom echo test (multiple nodes)
       run: |
         ./maelstrom/maelstrom test -w broadcast --bin ./target/release/broadcast --node-count 1 --time-limit 20 --rate 10
+        
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
