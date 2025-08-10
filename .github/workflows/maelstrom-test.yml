@@ -48,11 +48,11 @@ jobs:
       
     - name: Run Maelstrom echo test
       run: |
-        ./maelstrom/maelstrom test -w echo --bin ./target/release/dist-sys --node-count 1 --time-limit 10
+        ./maelstrom/maelstrom test -w echo --bin ./target/release/echo --node-count 1 --time-limit 10
         
     - name: Run Maelstrom echo test (multiple nodes)
       run: |
-        ./maelstrom/maelstrom test -w echo --bin ./target/release/dist-sys --node-count 3 --time-limit 10
+        ./maelstrom/maelstrom test -w echo --bin ./target/release/echo --node-count 3 --time-limit 10
         
     - name: Upload test results
       if: always()
