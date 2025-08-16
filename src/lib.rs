@@ -1,6 +1,9 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::io::{BufRead, StdoutLock, Write};
+use std::io::{StdoutLock, Write};
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+#[allow(async_fn_in_trait)]
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message<Payload> {
@@ -67,37 +70,38 @@ pub struct Init {
     pub node_ids: Vec<String>,
 }
 
+#[allow(async_fn_in_trait)]
 pub trait Node<S, Payload, InjectedPayload = ()> {
-    fn from_init(
+    async fn from_init(
         state: S,
         init: Init,
-        inject: std::sync::mpsc::Sender<Event<Payload, InjectedPayload>>,
+        inject: tokio::sync::mpsc::UnboundedSender<Event<Payload, InjectedPayload>>,
     ) -> anyhow::Result<Self>
     where
         Self: Sized;
 
-    fn step(
+    async fn step(
         &mut self,
         input: Event<Payload, InjectedPayload>,
         output: &mut StdoutLock,
     ) -> anyhow::Result<()>;
 }
 
-pub fn main_loop<S, N, P, IP>(init_state: S) -> anyhow::Result<()>
+pub async fn main_loop<S, N, P, IP>(init_state: S) -> anyhow::Result<()>
 where
     P: DeserializeOwned + Send + 'static,
     N: Node<S, P, IP>,
     IP: Send + 'static,
 {
-    let stdin = std::io::stdin().lock();
-    let mut stdin = stdin.lines();
+    let stdin = tokio::io::stdin();
+    let mut stdin = BufReader::new(stdin).lines();
     let mut stdout = std::io::stdout().lock();
 
     let init_msg: Message<InitPayload> = serde_json::from_str(
         &stdin
-            .next()
-            .expect("no init msg")
-            .context("failed to read init msg")?,
+            .next_line()
+            .await?
+            .expect("no init msg"),
     )
     .context("init could not be deserialised")?;
 
@@ -119,15 +123,15 @@ where
 
     drop(stdin);
 
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
     let mut node: N =
-        Node::from_init(init_state, init, tx.clone()).context("node initialization failed")?;
+        N::from_init(init_state, init, tx.clone()).await.context("node initialization failed")?;
 
-    let jh = std::thread::spawn(move || {
-        let stdin  = std::io::stdin().lock();
-        for line in stdin.lines() {
-            let line = line.context("input could not be read")?;
+    let jh = tokio::spawn(async move {
+        let stdin = tokio::io::stdin();
+        let mut stdin = BufReader::new(stdin).lines();
+        while let Some(line) = stdin.next_line().await? {
             let input = serde_json::from_str(&line).context("input could not be deserialized")?;
 
             if let Err(_) = tx.send(Event::Message(input)) {
@@ -138,13 +142,13 @@ where
         Ok(())
     });
 
-    for input in rx {
-        node.step(input, &mut stdout).context("node step failed")?;
+    while let Some(input) = rx.recv().await {
+        node.step(input, &mut stdout).await.context("node step failed")?;
     }
 
-    jh.join()
-        .expect("thread panicked")
-        .context("stdin thread err")?;
+    jh.await
+        .context("stdin task panicked")?
+        .context("stdin task err")?;
 
     Ok(())
 }

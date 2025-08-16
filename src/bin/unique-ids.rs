@@ -20,10 +20,10 @@ struct UniqueNode {
 }
 
 impl Node<(), Payload> for UniqueNode {
-    fn from_init(
+    async fn from_init(
         _state: (),
         init: Init,
-        _tx: std::sync::mpsc::Sender<Event<Payload>>,
+        _tx: tokio::sync::mpsc::UnboundedSender<Event<Payload>>,
     ) -> anyhow::Result<Self>
     where
         Self: Sized,
@@ -33,7 +33,7 @@ impl Node<(), Payload> for UniqueNode {
             id: 1,
         })
     }
-    fn step(&mut self, input: Event<Payload>, output: &mut StdoutLock) -> anyhow::Result<()> {
+    async fn step(&mut self, input: Event<Payload>, output: &mut StdoutLock<'_>) -> anyhow::Result<()> {
         let Event::Message(input) = input else {
             panic!("no event injection");
         };
@@ -52,6 +52,7 @@ impl Node<(), Payload> for UniqueNode {
     }
 }
 
-fn main() -> anyhow::Result<()> {
-    main_loop::<_, UniqueNode, _, _>(())
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    main_loop::<_, UniqueNode, _, _>(()).await
 }

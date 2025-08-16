@@ -42,14 +42,15 @@ struct BroadcastNode {
 }
 
 impl Node<(), Payload, InjectedPayload> for BroadcastNode {
-    fn from_init(
+    async fn from_init(
         _state: (),
         init: Init,
-        tx: std::sync::mpsc::Sender<Event<Payload, InjectedPayload>>,
+        tx: tokio::sync::mpsc::UnboundedSender<Event<Payload, InjectedPayload>>,
     ) -> anyhow::Result<Self> {
-        std::thread::spawn(move || {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(100));
             loop {
-                std::thread::sleep(Duration::from_millis(100));
+                interval.tick().await;
                 if let Err(_) = tx.send(Event::Injected(InjectedPayload::Gossip)) {
                     break;
                 }
@@ -69,10 +70,10 @@ impl Node<(), Payload, InjectedPayload> for BroadcastNode {
         })
     }
 
-    fn step(
+    async fn step(
         &mut self,
         input: Event<Payload, InjectedPayload>,
-        output: &mut StdoutLock,
+        output: &mut StdoutLock<'_>,
     ) -> anyhow::Result<()> {
         match input {
             Event::EOF => {}
@@ -152,6 +153,7 @@ impl Node<(), Payload, InjectedPayload> for BroadcastNode {
     }
 }
 
-fn main() -> anyhow::Result<()> {
-    main_loop::<_, BroadcastNode, _, _>(())
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    main_loop::<_, BroadcastNode, _, _>(()).await
 }

@@ -16,10 +16,10 @@ struct EchoNode {
 }
 
 impl Node<(), Payload> for EchoNode {
-    fn from_init(
+    async fn from_init(
         _state: (),
         _init: Init,
-        _tx: std::sync::mpsc::Sender<Event<Payload>>,
+        _tx: tokio::sync::mpsc::UnboundedSender<Event<Payload>>,
     ) -> anyhow::Result<Self>
     where
         Self: Sized,
@@ -27,7 +27,7 @@ impl Node<(), Payload> for EchoNode {
         Ok(EchoNode { id: 1 })
     }
 
-    fn step(&mut self, input: Event<Payload>, output: &mut StdoutLock) -> anyhow::Result<()> {
+    async fn step(&mut self, input: Event<Payload>, output: &mut StdoutLock<'_>) -> anyhow::Result<()> {
         let Event::Message(input) = input else {
             panic!("no event injection");
         };
@@ -45,6 +45,7 @@ impl Node<(), Payload> for EchoNode {
     }
 }
 
-fn main() -> anyhow::Result<()> {
-    main_loop::<_, EchoNode, _, _>(())
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    main_loop::<_, EchoNode, _, _>(()).await
 }
