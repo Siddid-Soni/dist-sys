@@ -1,34 +1,43 @@
-use dist_sys::*;
 use anyhow::{Context, Ok};
+use dist_sys::*;
 use serde::{Deserialize, Serialize};
-use std::{io::{StdoutLock, Write}};
-
+use std::io::StdoutLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag="type")]
-#[serde(rename_all="snake_case")]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
 enum Payload {
     Echo { echo: String },
     EchoOk { echo: String },
 }
 
 struct EchoNode {
-    id: usize
+    id: usize,
 }
 
 impl Node<(), Payload> for EchoNode {
-    fn from_init(_state: (), _init: Init) -> anyhow::Result<Self>
-        where Self: Sized {
-            Ok(EchoNode { id: 1 })
+    fn from_init(
+        _state: (),
+        _init: Init,
+        _tx: std::sync::mpsc::Sender<Event<Payload>>,
+    ) -> anyhow::Result<Self>
+    where
+        Self: Sized,
+    {
+        Ok(EchoNode { id: 1 })
     }
-    fn step(&mut self, input: Message<Payload>, output: &mut StdoutLock) -> anyhow::Result<()> {
+
+    fn step(&mut self, input: Event<Payload>, output: &mut StdoutLock) -> anyhow::Result<()> {
+        let Event::Message(input) = input else {
+            panic!("no event injection");
+        };
+
         let mut reply = input.into_reply(Some(&mut self.id));
         match reply.body.payload {
             Payload::Echo { echo } => {
                 reply.body.payload = Payload::EchoOk { echo };
-                serde_json::to_writer(&mut *output, &reply).context("serialize response")?;
-                output.write_all(b"\n").context("newline")?;
-                self.id += 1;
+
+                reply.send(output).context("reply to echo")?;
             }
             Payload::EchoOk { .. } => {}
         }
@@ -37,5 +46,5 @@ impl Node<(), Payload> for EchoNode {
 }
 
 fn main() -> anyhow::Result<()> {
-    main_loop::<_,EchoNode,_>(())
+    main_loop::<_, EchoNode, _, _>(())
 }
