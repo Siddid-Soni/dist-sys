@@ -1,7 +1,7 @@
 use anyhow::{Context, Ok};
 use dist_sys::*;
 use serde::{Deserialize, Serialize};
-use std::io::StdoutLock;
+use std::{io::{StdoutLock}, sync::{Arc, Mutex}};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -12,7 +12,7 @@ enum Payload {
 }
 
 struct EchoNode {
-    id: usize,
+    id: Mutex<usize>,
 }
 
 impl Node<(), Payload> for EchoNode {
@@ -20,23 +20,29 @@ impl Node<(), Payload> for EchoNode {
         _state: (),
         _init: Init,
         _tx: tokio::sync::mpsc::UnboundedSender<Event<Payload>>,
+        _output: &mut StdoutLock<'_>
     ) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
-        Ok(EchoNode { id: 1 })
+        Ok(EchoNode { 
+            id: Mutex::new(1),
+        })
     }
 
-    async fn step(&mut self, input: Event<Payload>, output: &mut StdoutLock<'_>) -> anyhow::Result<()> {
+    async fn step(&self, input: Event<Payload>, output: Arc<Mutex<std::io::Stdout>>) -> anyhow::Result<()> {
         let Event::Message(input) = input else {
             panic!("no event injection");
         };
 
-        let mut reply = input.into_reply(Some(&mut self.id));
+        let mut reply = {
+            let mut id = self.id.lock().unwrap();
+            input.into_reply(Some(&mut *id))
+        };
+        
         match reply.body.payload {
             Payload::Echo { echo } => {
                 reply.body.payload = Payload::EchoOk { echo };
-
                 reply.send(output).context("reply to echo")?;
             }
             Payload::EchoOk { .. } => {}
@@ -47,5 +53,5 @@ impl Node<(), Payload> for EchoNode {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    main_loop::<_, EchoNode, _, _>(()).await
+    main_loop::<_, EchoNode, _, _, _>(()).await
 }

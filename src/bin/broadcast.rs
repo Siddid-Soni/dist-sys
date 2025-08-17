@@ -3,9 +3,7 @@ use dist_sys::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
-    io::StdoutLock,
-    time::Duration,
+    collections::{HashMap, HashSet}, io::StdoutLock, sync::{Arc, Mutex}, time::Duration
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,19 +31,26 @@ enum InjectedPayload {
     Gossip,
 }
 
-struct BroadcastNode {
-    node: String,
+// Shared mutable state
+#[derive(Debug)]
+struct NodeState {
     id: usize,
     messages: HashSet<usize>,
     known: HashMap<String, HashSet<usize>>,
     neighborhood: Vec<String>,
 }
 
-impl Node<(), Payload, InjectedPayload> for BroadcastNode {
+struct BroadcastNode {
+    node: String,
+    state: Mutex<NodeState>,
+}
+
+impl Node<(), Payload, (), InjectedPayload> for BroadcastNode {
     async fn from_init(
         _state: (),
         init: Init,
-        tx: tokio::sync::mpsc::UnboundedSender<Event<Payload, InjectedPayload>>,
+        tx: tokio::sync::mpsc::UnboundedSender<Event<Payload, (), InjectedPayload>>,
+        _output: &mut StdoutLock<'_>
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(100));
@@ -58,31 +63,40 @@ impl Node<(), Payload, InjectedPayload> for BroadcastNode {
         });
 
         Ok(Self {
-            node: init.node_id,
-            id: 1,
-            messages: HashSet::new(),
-            neighborhood: vec![],
-            known: init
-                .node_ids
-                .into_iter()
-                .map(|nid| (nid, HashSet::new()))
-                .collect(),
+            node: init.node_id.clone(),
+            state: Mutex::new(NodeState {
+                id: 1,
+                messages: HashSet::new(),
+                neighborhood: vec![],
+                known: init
+                    .node_ids
+                    .into_iter()
+                    .map(|nid| (nid, HashSet::new()))
+                    .collect(),
+            }),
         })
     }
 
     async fn step(
-        &mut self,
-        input: Event<Payload, InjectedPayload>,
-        output: &mut StdoutLock<'_>,
+        &self,
+        input: Event<Payload, (), InjectedPayload>,
+        output: Arc<Mutex<std::io::Stdout>>,
     ) -> anyhow::Result<()> {
         match input {
             Event::EOF => {}
+            Event::ServiceMessage(..) => {}
+            
             Event::Injected(payload) => match payload {
                 InjectedPayload::Gossip => {
-                    for n in &self.neighborhood {
-                        let known_to_n = &self.known[n];
-                        let (already_known, mut notify_of): (HashSet<_>, HashSet<_>) = self
-                            .messages
+                    // Get current state snapshot
+                    let (neighborhood, messages, known) = {
+                        let state = self.state.lock().unwrap();
+                        (state.neighborhood.clone(), state.messages.clone(), state.known.clone())
+                    };
+
+                    for n in &neighborhood {
+                        let known_to_n = &known[n];
+                        let (already_known, mut notify_of): (HashSet<_>, HashSet<_>) = messages
                             .iter()
                             .copied()
                             .partition(|m| known_to_n.contains(m));
@@ -106,43 +120,55 @@ impl Node<(), Payload, InjectedPayload> for BroadcastNode {
                                 payload: Payload::Gossip { seen: notify_of },
                             },
                         }
-                        .send(output)
+                        .send(output.clone())
                         .with_context(|| format!("gossip to {}", n))?
                     }
                 }
             },
 
             Event::Message(input) => {
-                let mut reply = input.into_reply(Some(&mut self.id));
+                let mut reply = {
+                    let mut state = self.state.lock().unwrap();
+                    input.into_reply(Some(&mut state.id))
+                };
                 match reply.body.payload {
                     Payload::Gossip { seen } => {
-                        self.known
+                        let mut state = self.state.lock().unwrap();
+                        state.known
                             .get_mut(&reply.dst)
                             .expect("got gossip from unknown node")
                             .extend(seen.iter().copied());
 
-                        self.messages.extend(seen);
+                        state.messages.extend(seen);
                     }
 
                     Payload::Broadcast { message } => {
-                        self.messages.insert(message);
+                        {
+                            let mut state = self.state.lock().unwrap();
+                            state.messages.insert(message);
+                        } // Lock released here
+                        
                         reply.body.payload = Payload::BroadcastOk;
-
                         reply.send(output).context("reply to broadcast")?;
                     }
                     Payload::Read => {
-                        reply.body.payload = Payload::ReadOk {
-                            messages: self.messages.clone(),
+                        let messages = {
+                            let state = self.state.lock().unwrap();
+                            state.messages.clone()
                         };
 
+                        reply.body.payload = Payload::ReadOk { messages };
                         reply.send(output).context("reply to read")?;
                     }
                     Payload::Topology { mut topology } => {
-                        self.neighborhood = topology
-                            .remove(&self.node)
-                            .unwrap_or_else(|| panic!("no topology given for node {}", self.node));
-                        reply.body.payload = Payload::TopologyOk;
+                        {
+                            let mut state = self.state.lock().unwrap();
+                            state.neighborhood = topology
+                                .remove(&self.node)
+                                .unwrap_or_else(|| panic!("no topology given for node {}", self.node));
+                        } // Lock released here
 
+                        reply.body.payload = Payload::TopologyOk;
                         reply.send(output).context("reply to topology")?;
                     }
                     Payload::ReadOk { .. } | Payload::BroadcastOk { .. } | Payload::TopologyOk => {}
@@ -155,5 +181,5 @@ impl Node<(), Payload, InjectedPayload> for BroadcastNode {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    main_loop::<_, BroadcastNode, _, _>(()).await
+    main_loop::<_, BroadcastNode, _, _ ,_>(()).await
 }
